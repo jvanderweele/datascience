@@ -1,0 +1,1 @@
+Model selection using ridge regression, LASSO, and other methods. Modeling process assessment using double cross validation.

@@ -1,0 +1,687 @@
+---
+title: "Bank Loan Optimization"
+author: "Jason Vander Weele"
+date: "April 20, 2018"
+output: word_document
+---
+# Section 1: Setup/Load Packages
+```{r, message=FALSE, results='hide', warning=FALSE}
+library(ggplot2); library(gridExtra); library(GGally);  library(HH); library(leaps); library(psych); library(scales)
+```
+
+```{r, echo=FALSE, results='hide'}
+#Set my directory
+setwd("xxxxx")
+```
+
+# Section 2: Introduction
+Bank31 is a small regional bank located in San Jose, CA. Over the years, Bank31 management has realized they hold key information in their historical data that could help drive better decisions on bank loans and result in stronger returns in their books. Bank31 has requested an investigation into their data. Specifically, Bank31 has asked for a loan prediction model to gain an understanding and method to determine if a customer applying for a loan is likely to default. The end goal is to develop a model to increase profit by making predictions about whether a loan to a customer will be good or bad by scoring individual applicants and assigning a minimum threshold to use in granting a loan.
+
+The approach we will use is for the analysis is to use logistic regression to model any number of the 29 independent variables (excluding ID and totalPaid) to predict the dependent variable loan default. Prior to building the model we will perform some transformations, cleaning, and possible missing value imputation in preparing the 50,000 records provided. We will then split the data into training and test datasets before building our models.
+
+# Section 3: Preparing and Exploring the Data
+
+```{r getdata, message=FALSE, results='hide', echo=FALSE}
+#Store the data
+mydata <- read.csv("loans50k.csv") #read csv file
+```
+
+After loading the data, we take a look at some of the summary statistics to better understand the dataset we are working with. By doing so, we observe there are some missing value categories, such as in the *home* variable, *bcratio*, and *revolRatio*.
+
+```{r echo=FALSE, warning=FALSE, results='hide', fig.show='hide'}
+# Create histograms of some of the key loan characteristic data.
+p1 <- ggplot(data=mydata, aes(x=home)) + 
+      geom_bar(fill="blue") + 
+      xlab("Home") +
+      theme(axis.text.x=element_text(angle=90, hjust=1, vjust=0))
+p2 <- ggplot(data=mydata, aes(x=reason)) + 
+      geom_bar(fill="purple") + 
+      xlab("Reason for Applying") +
+      theme(axis.text.x=element_text(angle=90, hjust=1, vjust=0))
+grid.arrange(p1, p2, nrow=2,
+             top="Loan Characteristics")
+```
+
+```{r echo=FALSE, warning=FALSE, results='hide', fig.show='hide'}
+p3 <- ggplot(data=mydata, aes(x=totalAcc)) + 
+      geom_bar(fill="orange") + 
+      xlab("Total Accounts") +
+      theme(axis.text.x=element_text(angle=90, hjust=1, vjust=0))
+p4 <- ggplot(data=mydata, aes(x=grade)) + 
+      geom_bar(fill="tan") + 
+      xlab("Grade of Loan (A:Least Risk, G:Most Risk") +
+      theme(axis.text.x=element_text(angle=90, hjust=1, vjust=0))
+grid.arrange(p3, p4, nrow=2,
+             top="Loan Characteristics")
+```
+
+```{r echo=FALSE, warning=FALSE, eval=FALSE, fig.show='hide'}
+# p6 <- ggplot(data=mydata, aes(x=status)) + 
+#       geom_bar(fill="tomato3") + 
+#       xlab("Loan Status") +
+#       theme(axis.text.x=element_text(angle=90, hjust=1, vjust=0))
+p7 <- ggplot(data=mydata, aes(x=state)) +
+      geom_bar(fill="yellow3") +
+      xlab("Applicant State") +
+      theme(axis.text.x=element_text(angle=90, hjust=1, vjust=0))
+grid.arrange(p7, nrow=1,
+             top="Loan Characteristics")
+```
+
+By examining the variable *state* we see most of the 50 states are represented with varying counts between them. For example, we see most of the records in our dataset come from California, whereas barely any come from North Dakota. This tells us that maybe there is some correlation for the size of a state compared with its population, but we can't know for sure. Because it has so many categories we will transform this variable into region.
+
+```{r echo=FALSE, warning=FALSE}
+p8 <- ggplot(data=mydata, aes(x=debtIncRat)) + 
+      geom_bar(fill="orange3") + 
+      xlab("Non-Mortgage Debt to Income Ratio") +
+      theme(axis.text.x=element_text(angle=90, hjust=1, vjust=0))
+p9 <- ggplot(data=mydata, aes(x=delinq2yr)) + 
+      geom_bar(fill="orchid3") + 
+      xlab("Late Payments in Last 2 Years") +
+      theme(axis.text.x=element_text(angle=90, hjust=1, vjust=0))
+grid.arrange(p8, p9, nrow=1,
+             top="Loan Characteristics")
+```
+
+Above we see non-mortgage debt to income ratio which looks to be a fairly normal distribution with a mean of 18.7 percent. We see most people have zero late payments. This means as a predictor for bad loans we could imagine the category of 'zero' isn't going to be very helpful to the model because so much of the data is represented by that category, and likely from both good and bad loan applicants. However, we will find out if our hunch is right later on.
+
+We reviewed correlation within the dataset and observed some highly correlated variables. This means we expect the dataset contains some collinearity between variables. For example, performing a correlation function between *totalLim* and *totalBal* results in a correlation of .9858 meaning there is a strong positive linear relationship between these two variables. We can further understand this to mean that these two variables will provide overlapping explanations of the same variation in the response variable.
+
+```{r echo=FALSE, eval=FALSE, results='hide'}
+pairs(totalLim ~ totalRevBal + totalBcLim + totalIlLim + totalBal, data=mydata, main="Visualization of Correlation of Totals")
+```
+
+
+
+
+```{r}
+#Correlation between totalLim and totalBal:
+with(mydata,cor.test(totalLim, totalBal)$estimate)
+```
+
+We know that our prediction is going to be a variation of the loan *status* variable. In our case, we want a *Good* status to include "Fully Paid" and a *Bad* status to include "Charged Off" or "Default". All other status types are considered to be unknown final outcomes and are therefore removed from the data in their entirety. Below is the number of records by status in the data, which we will transform to a factor variable having a value of Good or Bad as our dependent outcome variable for the logistic regression.
+
+```{r, echo=FALSE}
+###Here we display our status variable:
+t <- as.data.frame(summary(mydata$status))
+names(t)[1]='Number of Records'
+t
+```
+
+
+```{r, echo=FALSE, results='hide'}
+###Here we create a transformed status to account for good/bad:
+mydata$OutcomeStatus <- NA #Define variable
+mydata <- within(mydata, {
+  OutcomeStatus[] <- "RemoveRecord"
+  OutcomeStatus[status=="Fully Paid"] <- "Good"
+  OutcomeStatus[status=="Charged Off"] <- "Bad"
+  OutcomeStatus[status=="Default"] <- "Bad"
+})
+
+###And, display it for ourselves:
+table(mydata$OutcomeStatus)
+
+###Because we want to reduce noise in our data exploration, we immediately remove unknown outcome records:
+mydata <- mydata[!mydata$OutcomeStatus=="RemoveRecord",]
+
+###Convert from character to factor (should have two levels here if we did in order):
+mydata$OutcomeStatus <- as.factor(mydata$OutcomeStatus)
+
+```
+
+Now we can see correlation as it relates to good and bad loan outcomes. Notice *totalLim* and *totalBal* are highly correlated to both good and bad outcomes (.986 overall). Whereas there is only a moderate correlation (~.50) for *totalRevBal* and *totalBal* when compared to *totalLim*. This result can be observed in the plots below where the red color indicates bad loans and the blue color indicates good loans.
+
+```{r, echo=FALSE, message=FALSE}
+#Display the correlation plots
+# ggpairs(mydata, aes( alpha = .4, color = OutcomeStatus), title=("Correlations"), columns = c("amount", "totalLim", "totalRevBal", "totalBcLim", "totalIlLim", "totalBal", "debtIncRat") )
+
+ggpairs(mydata, aes( alpha = .4, color = OutcomeStatus), title=("Correlations"), columns = c( "totalLim", "totalBal", "totalRevBal") )
+```
+
+
+
+```{r, echo=FALSE}
+colorpal <- c("#E69F00", "#56B4E9")
+ggplot(mydata, aes(x=totalAcc, fill=OutcomeStatus)) +
+    geom_histogram(binwidth=1, alpha=.5, position="dodge") +
+    xlab("Variable 'totalAcc'") +
+    ggtitle("Distribution of Total Accounts") +
+    scale_fill_manual(values=colorpal)
+
+```
+
+Above, we see the distribution of total accounts by loan outcome status. We can see there isn't an obvious visual difference in good or bad outcomes based on the total account distributions. On its own, this variable wouldn't appear to be a great predictor.
+
+Below we see that the debt-to-income ratio appears to have a somewhat shifted distribution for good and bad loan outcomes. The peak for good loans is a little left of the peak for bad loans. This plot suggests that bad loans are given to people with slightly higher debt to income ratios. Perhaps this variable will be influential in the prediction model.
+
+```{r, echo=FALSE}
+colorpal <- c("#0072B2", "#D55E00")
+ggplot(mydata, aes(x=debtIncRat, fill=OutcomeStatus)) +
+    geom_histogram(binwidth=.1, alpha=.5, position="dodge") +
+    xlab("Variable 'debtIncRat'") +
+    ggtitle("Distribution of Debt Income Ratio") +
+    scale_fill_manual(values=colorpal)
+
+```
+
+```{r, echo=FALSE, results='hide'}
+###Begin Exploratory Analysis:
+#summary(mydata) #Review summary statistics as needed
+#mydata$amount[is.na(mydata$amount) ==TRUE ] #Inspected the amount field and no 'NA' values exist
+#mydata[!complete.cases(mydata),] #Display the data as needed
+zeros <- mydata[is.na(mydata$bcOpen)&is.na(mydata$bcRatio),] #later, after we analyze the ratio more, we will impute zero values for these
+
+###Data that is not correct based on credit card ratio being missing and unused credit being non-zero/missing:
+
+bcratiozero <- mydata[(!is.na(mydata$bcOpen))&is.na(mydata$bcRatio),]
+
+###Because we want to reduce noise in our data exploration, we immediately remove these missing value cases:
+
+mydata <- mydata[!(mydata$loadID %in% bcratiozero$loadID),]
+
+###Now that we've cleaned up the noise of potentially erroneous records, we impute 0 for the other values:
+
+mydata <- within(mydata, {
+  bcOpen[is.na(bcOpen)] <- 0
+  bcRatio[is.na(bcRatio)] <-0
+})
+
+###Listwise deletion of NA for the 13 revolRatio records (was 34,631)
+
+mydata <- mydata[!is.na(mydata$revolRatio),]
+
+```
+
+```{r, echo=FALSE, results='hide'}
+###Create new "Region" variable based on State
+data(state)
+mydata$Region <- state.region[match(mydata$state,state.abb)]
+###Classify DC which is missing into South:
+mydata$Region[which(mydata$state=="DC")] <- "South"
+
+#######Recode reason codes into smaller categories########
+#summary(mydata$reason)
+mydata$reason_recoded[1:length(mydata$reason)] <- mydata$reason
+mydata$reason_recoded[mydata$reason=="home_improvement"] <- "home"
+mydata$reason_recoded[mydata$reason=="house"] <- "home"
+mydata$reason_recoded[mydata$reason=="car"] <- "other"
+mydata$reason_recoded[mydata$reason=="major_purchase"] <- "other"
+mydata$reason_recoded[mydata$reason=="medical"] <- "other"
+mydata$reason_recoded[mydata$reason=="moving"] <- "other"
+mydata$reason_recoded[mydata$reason=="renewable_energy"] <- "other"
+mydata$reason_recoded[mydata$reason=="small_business"] <- "other"
+mydata$reason_recoded[mydata$reason=="vacation"] <- "other"
+mydata$reason_recoded[mydata$reason=="wedding"] <- "other"
+mydata$reason_recoded[mydata$reason=="other"] <- "other"
+mydata$reason_recoded[mydata$reason=="credit_card"] <- "credit card"
+mydata$reason_recoded[mydata$reason=="debt_consolidation"] <- "debt consolidation"
+mydata$reason_recoded[is.na(mydata$reason)] <- NA
+
+###Convert from character to factor:
+mydata$reason_recoded <- as.factor(mydata$reason_recoded)
+#summary(mydata$reason_recoded)
+
+```
+
+
+```{r, echo=FALSE, results='hide'}
+#summary(mydata$length)
+#Transform some of the categories to bin them a little more
+mydata$lengthtransformed <- NA
+mydata <- within(mydata, {
+  lengthtransformed[length=="< 1 year"] <- "0 to 3 years"
+    lengthtransformed[length=="1 year"] <- "0 to 3 years"
+      lengthtransformed[length=="2 years"] <- "0 to 3 years"
+        lengthtransformed[length=="3 years"] <- "0 to 3 years"
+  lengthtransformed[length=="4 years"] <- "4 to 7 years"
+    lengthtransformed[length=="5 years"] <- "4 to 7 years"
+      lengthtransformed[length=="6 years"] <- "4 to 7 years"
+        lengthtransformed[length=="7 years"] <- "4 to 7 years"
+  lengthtransformed[length=="8 years"] <- "8 to 10+ years"
+    lengthtransformed[length=="9 years"] <- "8 to 10+ years"
+      lengthtransformed[length=="10+ years"] <- "8 to 10+ years"
+  lengthtransformed[length=="n/a"] <- "Unknown"
+})
+summary(mydata$length)
+mydata$lengthtransformed <- as.factor(mydata$lengthtransformed)
+summary(mydata$lengthtransformed)
+#Remove the original variable:
+mydata <- subset(mydata, select = -c(length)) #Remove length, only two categories 36/60 months
+mydata <- subset(mydata, select = -c(employment)) #Remove employment, listing job titles
+
+#Remove status (already transformed), state because we created Region
+mydata <- subset(mydata, select = -c(status, state))
+```
+
+In our analysis, we found missing data. We determined that when both *bcOpen* and *bcRatio* fields are missing we would impute zero-values for because they are unused credit on credit cards and ratio of total credit card balance. We imputed missing values for *bcOpen* and *bcRatio* when both were NA and imputed zero into the records if one of the values was missing, as these appeared to be MAR values.
+
+We recategorized *state* into *Region*. We also consolidated *reason* into larger buckets. After attempting some re-categorization for *employment* it was determined to remove. The *employment* variable simply listed or did not list the job title of the loan applicant.
+
+We deleted rows where the variable *revolRatio* was missing.
+
+Finally, after performing transformations into new variables with consolidated categories, we eliminated the variables: *status*, *state*, *reason*, *length*, and *employment*.
+
+The procedures above successfully dealt with all missing values in the dataset as well as transforming categories and we have a resulting count of 34,618 rows.
+
+Below we see the outcome of re-categorization of the *length* variable by grouping the smaller groups together. We decided to leave the 'unknowns' included because it is possible that having an unknown value for the length of time employed might be useful information to our model in some way. That is, it could be measuring something that is not yet obvious in our analysis.
+
+```{r, echo=FALSE}
+summary(mydata$lengthtransformed)
+```
+
+Finally, below we split the total count of records having "good" and "bad" outcomes into a train (80%) and test (20%) dataset.
+
+```{r, echo=FALSE, results='hide'}
+set.seed(101) # Set Seed so that same sample can be reproduced in future also
+
+# Now Selecting 80% of data as sample from total 'n' rows of the data
+
+smp_size <- floor(0.80 * nrow(mydata))
+
+#Set index for training data
+
+train_ind <- sample(seq_len(nrow(mydata)), size = smp_size)
+
+#Create datasets. Notice the negative sign captures all cases not in the train_ind list.
+
+train <- mydata[train_ind, ]
+test <- mydata[-train_ind, ]
+```
+
+```{r}
+#Display outcome tables for each dataset
+table(train$OutcomeStatus)
+table(test$OutcomeStatus)
+```
+
+
+#Section 4: First Model and Diagnostics
+
+Now that we have cleaned our data and have a basic understanding of it, we can perform our first logistic regression model. Below is the output of that model, using the independent variables in our training data set. Note: we have further removed totalPaid and loadID as they are not to be used as predictors because we wouldn't know totalPaid prior to issuing a loan and loadID is just a row identifier.
+
+```{r, echo=FALSE, results='hide'}
+train <- subset(train, select = -c(totalPaid)) #clean up these variables from training set
+train <- subset(train, select = -c(loadID)) #clean up these variables from training set
+```
+
+```{r, results='hide'}
+#Create the logistic regression model and display summary:
+loan.out <- glm(OutcomeStatus~., data=train, family="binomial")
+```
+```{r, eval=FALSE, echo=FALSE, results='hide'}
+summary(loan.out)
+#While we didn't include it in our Part 1 report, there were some variables
+#with a VIF > 10. They were: amount, rate, payment, grade, totalBal, totalLim,
+#totalRevBal, and totalIlLim which indicate collinearity issues are present.
+vif(loan.out)
+```
+
+Next, we apply our model using the predict function to our test data (which was kept blind from the model).
+
+```{r, results='hide', message=FALSE, warning=FALSE}
+prediction <- predict(loan.out, test, type="response")
+```
+```{r, echo=FALSE, results='hide', message=FALSE, fig.show='hide'}
+#prediction[1:5] #example of some values
+#summary(prediction) #if we want stats
+boxplot(prediction, xlab="Test Data Predictions", ylab="Predicted Value", col="light blue", main="Test Data Pred. Vals. Above/Below .5 Cutoff")
+abline(h=.50, col="red", lwd=3)
+```
+
+Upon review of the test predictions data, we find that our model's median predicted value for the test data is .81. A review of the summary statistics, below, shows that the first quartile begins at .70. This means at least 75% of our outcomes are much greater than .50. This tells us that the balance in our dataset is more heavily skewed toward individuals who are going to be classified as "good" (above the .50 threshold). This isn't surprising, because our original dataset has only 22% of cases being actual outcomes of 'bad' and thus we would expect to have many fewer prediction outcomes of bad than good.
+
+```{r}
+summary(prediction)
+```
+
+
+
+```{r}
+#Get 1/0 for the contingency table
+test$OutcomeStatusPredicted <- ifelse(prediction>= .5, "Good", "Bad")
+
+threshhold <- 0.5  # Declare threshold .5
+predOutcomeStatus <- cut(prediction, breaks=c(-Inf, threshhold, Inf), 
+                labels=c("Bad", "Good")) #Bad=0, Good=1
+
+cTab <- table(test$OutcomeStatus, predOutcomeStatus) 
+addmargins(cTab)
+
+p <- sum(diag(cTab)) / sum(cTab)  # compute the proportion of correct classifications
+print(paste('Proportion correctly predicted = ', round(p,2))) 
+```
+
+
+```{r, eval=FALSE, echo=FALSE}
+summary(test$OutcomeStatus)
+summary(as.factor(test$OutcomeStatusPredicted))
+summary(mydata$OutcomeStatus)
+```
+
+The total proportion correctly predicted was 79%. This means that of all the test data (good and bad) loan results, our model was accurate in its prediction 79% of the time. However, because only about 22% of our data includes "bad" loan outcomes our logistic regression method is not going to be as good at predicting the "bad" outcomes as it is the "good" outcomes (as we previously explored). More balancing of the data is needed. We see evidence of this in our overall rate being 79% but our correct classification of "bad" loans (the ones we're really interested in predicting) is only accurate for 179 of 1480 results. That is, the first logistic regression model only correctly predicted "bad" loans 12.1% of the time. Therefore, it is not recommended that we use this model at this time and we should continue developing other models and methods to be obtain greater accuracy.
+
+# Section 5: Improved Model and Diagnostics
+
+Here we begin with creating our balanced training set by resampling our bad outcomes.
+
+```{r, message=FALSE}
+#View our proportions of training data
+table(train$OutcomeStatus)
+prop.table(table(train$OutcomeStatus))
+```
+
+```{r, message=FALSE}
+#Create our resample 'badtoappend'
+set.seed(101)
+badrows <- train[which( train$OutcomeStatus == "Bad"),]
+summary(badrows$OutcomeStatus)
+badtoappend <- badrows[sample(nrow(badrows), size=15504, replace=TRUE),]
+```
+
+```{r, message=FALSE}
+#Need to create a new train dataset that includes both Train and BadToAppend, for a total of 27694+15504=43198 rows
+mytrain <- rbind(train, badtoappend)
+```
+
+```{r, eval=FALSE, results='hide', echo=FALSE}
+summary(badtoappend)
+summary(mytrain)
+```
+We split the dataset into a train (80%) and test (20%) set and then balanced the Good/Bad loans in the train set so that they each represent 50% of the training set. The method used to balance the train set was to extract the bad loans from our train set and sample with replacement (oversampling). Then, we appended the sample to our original train set representing 21,599 cases of each good and bad. The reason for creating a balanced data set to create bias so that our predictions work better for "Bad" loans. If we didn't do this, our model would likely be better at predicting "Good" loans but not necessarily for "Bad" loans, since only 20% of the data it would have trained on would have had the "Bad" loan outcome. In other words, this balances our training set to ensure the logistic regression model is trained to correctly predict each category as opposed to just good or bad loans because differing frequency.
+
+Now we are ready to create our new model from the training set and make and classify predictions.
+
+```{r, results='hide', message=FALSE}
+#Create the logistic regression model
+loanBAL.out <- glm(OutcomeStatus~., data=mytrain, family="binomial")
+```
+
+```{r, results='hide', echo=FALSE}
+# display summary for the balanced log reg mod:
+summary(loanBAL.out)
+vif(loanBAL.out)
+```
+
+```{r, message=FALSE, warning=FALSE}
+#Create prediction values for test data
+predictionBAL <- predict(loanBAL.out, test, type="response")
+
+#Classify 1/0 for the contingency table
+test$OutcomeStatusPredictedBAL <- ifelse(predictionBAL>= .5, "Good", "Bad")
+threshhold <- 0.5  # Declare threshold .5
+predBALOutcomeStatus <- cut(predictionBAL, breaks=c(-Inf, threshhold, Inf), 
+                labels=c("Bad", "Good")) #Bad=0, Good=1
+cTab <- table(test$OutcomeStatus, predBALOutcomeStatus) 
+addmargins(cTab)
+p <- sum(diag(cTab)) / sum(cTab)  # compute the proportion of correct classifications
+print(paste('Proportion correctly predicted = ', round(p,2))) 
+```
+
+The total proportion correctly predicted was 65%. This means that of all the test data (good and bad) loan results, our model was accurate in its overall prediction 65% of the time. Our correct classification of "bad" loans (the ones we're really interested in predicting) is accurate for 1001 of 1480 results. That is, after balancing the training data our logistic regression model correctly predicted "bad" loans 67.6% of the time. However, our incorrectly predicted "good" loans increased to 35.2%. Overall, this model does better predicting the bad loans and worse predicting the good loans. That is, we increase our failure to correctly predict good loans while increasing our accuracy in correctly predicting bad loans. Therefore, it is not recommended that we use this model at this time and we should continue developing other models and methods to be obtain greater accuracy.
+
+To try to produce a more effective logistic regression model we ran a series of stepwise procedures: backward and forward. Neither of these methods significantly improved results when applied against the test data with a .5 threshold. Additionally, we used regsubsets method with a 10 variable maximum, only achieving a .14 R-squared. For the step procedure, the best model was using the backward method with an AIC of 52,981. There were 21 variables of importance in that model selection which are:
+amount + term + payment + grade + home + verified + reason + debtIncRat + delinq2yr + inq6mth + openAcc + revolRatio + totalAcc + totalRevLim + accOpen24 + totalLim + totalRevBal + totalBcLim + totalIlLim + Region + lengthtransformed
+
+```{r, echo=FALSE, results='hide', eval=FALSE}
+###Full Model defined as:
+#loanBAL.out <- glm(OutcomeStatus~., data=mytrain, family="binomial")
+
+#Step with default both:
+step(loanBAL.out, direction="both")
+
+#Step backward:
+step(loanBAL.out, direction="backward")
+
+#Step forward:
+#Specify null model for forward step:
+null <- glm(OutcomeStatus~1, data=mytrain, family="binomial")
+step(null,scope=list(lower=null,upper=loanBAL.out),direction="forward")
+
+#Regsubsets automatic model:
+#allmodels <- regsubsets(OutcomeStatus~.,nvmax=10,data=mytrain, really.big=T)
+#summary(allmodels)$adjr2
+
+```
+
+
+
+```{r}
+#Best Models:
+#Best backward:
+bestloanbackward.out <- glm(formula = OutcomeStatus ~ amount + term + payment + grade + 
+    home + verified + reason + debtIncRat + delinq2yr + inq6mth + 
+    openAcc + revolRatio + totalAcc + totalRevLim + accOpen24 + 
+    totalLim + totalRevBal + totalBcLim + totalIlLim + Region + 
+    lengthtransformed, family = "binomial", data = mytrain)
+
+#Best forward:
+bestloanforward.out <- glm(formula = OutcomeStatus ~ grade + debtIncRat + term + totalLim + 
+    accOpen24 + Region + home + lengthtransformed + bcOpen + 
+    totalAcc + delinq2yr + payment + amount + reason + verified + 
+    inq6mth + revolRatio + openAcc + totalBal + totalIlLim + 
+    totalRevBal + totalBcLim + totalRevLim, family = "binomial", 
+    data = mytrain)
+
+
+extractAIC(bestloanbackward.out)
+extractAIC(bestloanforward.out)
+
+```
+
+```{r, echo=FALSE, eval=FALSE, results='hide'}
+#Best both:
+bestboth.out <- glm(formula = OutcomeStatus ~ amount + term + payment + grade + 
+    home + verified + reason + debtIncRat + delinq2yr + inq6mth + 
+    openAcc + revolRatio + totalAcc + totalRevLim + accOpen24 + 
+    totalLim + totalRevBal + totalBcLim + totalIlLim + Region + 
+    lengthtransformed, family = "binomial", data = mytrain)
+extractAIC(bestboth.out)
+
+```
+
+Below, we take our best automatic selection model and make predictions and classify the outcomes using the .5 threshold.
+
+```{r}
+#AutoOut
+loanAUTO.out <- glm(formula = OutcomeStatus ~ amount + term + payment + grade + 
+    home + verified + reason + debtIncRat + delinq2yr + inq6mth + 
+    openAcc + revolRatio + totalAcc + totalRevLim + accOpen24 + 
+    totalLim + totalRevBal + totalBcLim + totalIlLim + Region + 
+    lengthtransformed, family = "binomial", data = mytrain)
+
+#Create prediction values for test data
+predictionAUTO <- predict(loanAUTO.out, test, type="response")
+
+#Get 1/0 for the contingency table
+test$OutcomeStatusPredictedAUTO <- ifelse(predictionAUTO>= .5, "Good", "Bad")
+
+threshhold <- 0.5  # Declare threshold .5
+predAUTOOutcomeStatus <- cut(predictionAUTO, breaks=c(-Inf, threshhold, Inf), 
+                labels=c("Bad", "Good")) #Bad=0, Good=1
+
+cTab <- table(test$OutcomeStatus, predAUTOOutcomeStatus) 
+addmargins(cTab)
+
+p <- sum(diag(cTab)) / sum(cTab)  # compute the proportion of correct classifications
+print(paste('Proportion correctly predicted = ', round(p,2))) 
+
+```
+
+When applied to the test data at the .5 threshold, the best step model total proportion correctly predicted was 65%. Our correct classification of "bad" loans is accurate for 1002 of 1480 results, or 67.7% of the time. Our incorrectly predicted "good" loans are 35.1%. Overall, this model with only 21 predictors did about the same as our linear regression model using all of the predictors. We did note previously that some variables were highly correlated with others and that would lead us to believe there is overlapping explanation in the predictor variables for the full model, and thus why our final model with reduced predictors would make sense.
+
+# Section 6: Tuning the Predictions and Profit Analysis
+
+We now adjust our classification threshold to .60 to see if there is an improvement, resulting in the below:
+
+```{r, echo=FALSE, message=FALSE}
+#Store training model
+loanAUTO.out <- glm(formula = OutcomeStatus ~ amount + term + payment + grade + 
+    home + verified + reason + debtIncRat + delinq2yr + inq6mth + 
+    openAcc + revolRatio + totalAcc + totalRevLim + accOpen24 + 
+    totalLim + totalRevBal + totalBcLim + totalIlLim + Region + 
+    lengthtransformed, family = "binomial", data = mytrain)
+
+#Create prediction values for test data
+predictionAUTO <- predict(loanAUTO.out, test, type="response")
+
+#Get 1/0 for the contingency table
+test$OutcomeStatusPredictedAUTO <- ifelse(predictionAUTO>= .60, "Good", "Bad")
+
+threshhold <- 0.60  # Declare threshold .60
+predAUTOOutcomeStatus <- cut(predictionAUTO, breaks=c(-Inf, threshhold, Inf), 
+                labels=c("Bad", "Good")) #Bad=0, Good=1
+
+cTab <- table(test$OutcomeStatus, predAUTOOutcomeStatus) 
+addmargins(cTab)
+
+p <- sum(diag(cTab)) / sum(cTab)  # compute the proportion of correct classifications
+print(paste('Proportion correctly predicted = ', round(p,2))) 
+
+```
+
+By experimenting with the classification threshold to increase it from .5 to .6 or above, we can greatly increase the number of "bad loans" predicted to be bad. However, this is done at the expense of incorrectly predicting many of the "good loans" to be bad.
+
+```{r, message=FALSE, echo=FALSE, results='hide'}
+loanAUTO.out <- glm(formula = OutcomeStatus ~ amount + term + payment + grade + 
+    home + verified + reason + debtIncRat + delinq2yr + inq6mth + 
+    openAcc + revolRatio + totalAcc + totalRevLim + accOpen24 + 
+    totalLim + totalRevBal + totalBcLim + totalIlLim + Region + 
+    lengthtransformed, family = "binomial", data = mytrain)
+
+test$profit <- test$totalPaid - test$amount
+
+#Create prediction values for test data
+predictionAUTO <- predict(loanAUTO.out, test, type="response")
+```
+
+Continuing, we performed extensive experimentation with various classification thresholds, and found .37 is ideal for our model. The way we performed this was by picking an arbitrary threshold and modifying it slightly to observe the effect. Each time, we summed the profit to see the total profit at any given threshold. To do this, we started at the .50 threshold and went in each direction. We immediately noticed increasing the threshold, from .50 to .55, for example, resulted in a decrease in overall profit. However, when we decreased the threshold, profit increased. So, we continued decreasing until we observed a plateau in the total profit. This occurred at .37.
+
+We see below that using a value of .37 results in the most profit.
+
+```{r, message=FALSE, echo=FALSE }
+Threshold <- c(.00,.15,
+.25,
+.30,
+.33,
+.34,
+.35,
+.37,
+.38,
+.39,
+.40,
+.50,
+.51,
+.55,
+.60,
+.70,
+.80,
+.90)
+TotalProfit <- c(1521970,
+1892341,
+2865111,
+3290391,
+3622839,
+3787638,
+3815091,
+3848457,
+3790638,
+3783465,
+3731643,
+3338390,
+3313766,
+2996809,
+2628625,
+1822461,
+698029,
+66023)
+
+df <- data.frame(x=Threshold, y=TotalProfit)
+ggplot(data=df, aes( x = Threshold, y = TotalProfit) )  +
+  geom_point( shape =  1) + 
+  geom_smooth( span = .5 , se = FALSE ) + # change the smoothness parameter for less smoothing
+  scale_y_continuous(labels = comma) +
+  ylab("Total Profit ($)") +
+  xlab("Loan Cutoff Threshold (reject applicants < this value)")
+```
+
+A threshold of .37 is achieved with the following and we see the results of the predicted vs. actual outcome:
+
+```{r, message=FALSE}
+#Get 1/0 for the contingency table
+test$OutcomeStatusPredictedAUTO <- ifelse(predictionAUTO >= .37, "Good", "Bad") # Declare classification threshold (this is where we put in .25, .50, .60, .37, etc.)
+
+threshhold <- .37  # Declare cutoff threshold (this is where we put in .25, .50, .60, .37, etc.)
+predAUTOOutcomeStatus <- cut(predictionAUTO, breaks=c(-Inf, threshhold, Inf), 
+                labels=c("Bad", "Good")) #Bad=0, Good=1
+
+cTab <- table(test$OutcomeStatus, predAUTOOutcomeStatus) 
+addmargins(cTab)
+
+p <- sum(diag(cTab)) / sum(cTab)  # compute the proportion of correct classifications
+print(paste('Proportion correctly predicted = ', round(p,2)))
+
+#Profit for Loans Given
+sum(test$profit[which(test$OutcomeStatusPredictedAUTO=="Good")])
+
+#Number of Loans Given
+length(test$profit[which(test$OutcomeStatusPredictedAUTO=="Good")])
+```
+```{r, echo=FALSE, results='hide'}
+#Profit Per Loan Given
+sum(test$profit[which(test$OutcomeStatusPredictedAUTO=="Good")]) / length(test$profit[which(test$OutcomeStatusPredictedAUTO=="Good")])
+```
+
+```{r, echo=FALSE, results='hide'}
+#No Conditons:
+#.00 = 1,521,970 and 6,924 loans ($220 per loan)
+#.15 = 1,892,341
+#.25 = 2,865,111 and 6,444 loans ($445 per loan)
+#.30 = 3,290,391 and 6,084 loans ($541 per loan)
+#.33 = 3,622,839 and 5,826 loans ($622 per loan)
+#.34 = 3,787,638 and 5,752 loans ($658 per loan)
+#.35 = 3,815,091 and 5,668 loans ($673 per loan)
+#.37 = 3,848,457 and 5,479 loans ($702 per loan) * this is a 21% reduction in number of loans and 153% increase in profit
+#.371 = 3,850,192 and 5,467 loans ($704 per loan) * this is a 21% reduction in number of loans and 153% increase in profit
+#.38 = 3,790,638 and 5,372 loans ($706 per loan)
+#.39 = 3,783,465 and 5,271 loans ($717 per loan)
+#.40 = 3,731,643 and 5,149 loans ($725 per loan)
+#.50 = 3,338,390 and 4,009 loans ($833 per loan)
+#.51 = 3,313,766 and 3,889 loans ($852 per loan)
+#.55 = 2,996,809 and 3,436 loans ($872 per loan)
+#.60 = 2,628,625 and 2,890 loans ($910 per loan)
+#.70 = 1,822,461 and 1,788 loans ($1,019 per loan)
+#.80 = 698,029 and 663 loans ($1,052 per loan)
+#.90 = 66,023 and 42 loans ($1,571 per loan)
+
+# 3848457/ 1521970 --Increased profit at .37
+# 1-5479/6924 --decreased loans at .37
+```
+
+The result of experimenting with various thresholds is that the ideal threshold for maximizing profit is to refuse loans to any applicant scoring below .37. Anything above a .37 should be considered a 'good' loan for purposes of profit maximization. This means that while we know some individuals who do achieve above .37 will default, the profits, overall, will still be maximized by allowing individuals with at least that score to receive loans. That is, even though one person scoring above .37 may default (while still producing some revenue for the bank), there is more potential for profit reduction by misclassifying other applicants above that score because they may actually be good and we would miss those profits by rejecting them.
+
+For example, we look at a few of the results of a various classification thresholds:
+
+.00 Profit: \$1,521,970 over 6,924 loans (This is the full dataset, without model)
+
+.30 Profit: \$3,290,391 over 6,084 loans
+
+.37 Profit: \$3,848,457 over 5,479 loans
+
+.50 Profit: \$3,338,390 over 4,009 loans
+
+.70 Profit: \$1,822,461 over 1,788 loans
+
+It is important for us to set the rejection threshold. The reason it is important is because it allows us to have a 'maximum effect'. Certainly just taking a cutoff value of .50 would be better than not doing a model at all. However, we have shown above that by adjusting this threshold we can actually 'squeeze out' more profit than we would have by just settling for a .50 threshold. That is, by changing our rejection threshold to be anything below .37 we increase our profit even more.
+
+While the total profit will increase, we know that doing this (changing the rejection from .50 to .37) will also increase the number of bad loans. In terms of "risk" we must be clear that the risk of seeing more defaults increases as we decrease our rejection threshold. On the other hand, by setting the threshold higher we would potentially miss good loans.
+
+
+# Section 7: Results Summary
+To recap, the final model we used is a logistic regression model. The target variable was the transformed OutcomeStatus and the predictors were: amount + term + payment + grade + home + verified + reason + debtIncRat + delinq2yr + inq6mth + openAcc + revolRatio + totalAcc + totalRevLim + accOpen24 + totalLim + totalRevBal + totalBcLim + totalIlLim + Region + lengthtransformed.
+
+Our final model threshold for good loans is any applicant scoring greater than .37 which results in overall model accuracy of 76% with 42% of bad loans being correctly classified and 85% of good loans correctly classified.
+
+When we apply our model to our test dataset, we are able to correctly classify 631 out of 1,480 bad loans and 4,618 out of 5,444 good loans based on the confusion matrix with an overall accuracy of 76%.
+
+By setting a threshold of .37 and using our best logistic regression model, we actually achieve an increase of 153% in profit while decreasing total number of loans overall by 21%.

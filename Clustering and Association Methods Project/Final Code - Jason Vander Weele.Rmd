@@ -1,0 +1,524 @@
+---
+title: "Final Project"
+output: html_notebook
+---
+10-minutes total run-time for "run all"
+```{r Libraries }
+library(dplyr)
+library(tidyr)
+library(arules)
+library(PerformanceAnalytics) #for use with correlation plotting
+```
+```{r Source Data and Combination}
+#This data is sourced from: https://www.kaggle.com/ylchang/coffee-shop-sample-data-1113 on 11/29/2019 with attribution to: 
+#https://community.ibm.com/community/user/businessanalytics/blogs/steven-macko/2019/07/12/beanie-coffee-1113
+
+receipts = read.csv("coffee-shop-sample-data-1113/201904 sales reciepts.csv", head = T) #read the receipts in (main)
+products = read.csv("coffee-shop-sample-data-1113/product.csv", head = T) #read the products in (main)
+customers = read.csv("coffee-shop-sample-data-1113/customer.csv", head = T) #read the customers in (main)
+generations = read.csv("coffee-shop-sample-data-1113/generations.csv", head = T) #read the customers in
+staff = read.csv("coffee-shop-sample-data-1113/staff.csv", head = T) #read the customers in
+
+df1 = left_join(receipts, products, by="product_id") #join products to receipts based on product_id
+df2 = left_join(df1, customers, by="customer_id") #join customers to df1 based on customer_id
+df3 = left_join(df2, generations, by="birth_year") #join generations to df2 based on birth_year
+df4 = left_join(df3, staff, by="staff_id") #join staff to df3 based on staff_id
+
+```
+
+```{r General Data Preparation or Cleansing}
+summary(df4) #examine NAs
+
+drops = c("product_description", "promo_yn", "new_product_yn", "customer_first.name", "customer_email", "Date_ID", "Week_ID", "Week_Desc", "first_name", "last_name", "X", "X.1" ) #create exclusion variables
+primary.df =df4[,!(names(df4) %in% drops)] #create primary DF for all analysis datasets
+primary.dfBEVFOOD = primary.df[which(primary.df$product_group %in% c("Beverages", "Food")),] #later we will use just a beverages/food dataframe
+#################################################################
+####Begin creating matrices for Association Rules################
+#################################################################
+
+attach(primary.df) #attach the data so we don't specify dataset
+
+###PRODUCT:#####
+product.vals = with(primary.df, table(loyalty_card_number,product)) #make values for each product bought
+barplot(product.vals, beside=TRUE, legend=FALSE) #display plot of the values
+product.tbl = data.frame(product.vals) #set as table: This table is what needs to be used for "SPREAD" later on
+#The below creates a dataframe which has loyalty_card_number as a factor and all other values as ints.
+#We must transform those values to be = 1 (as a flag) if the product was purchased. Currently it is 
+#representing the total times the customer bought it. For our analysis, we are interested in the products
+#purchased by a customer so we can learn about associations between itemsets of additional products or product groups. 
+#Therefore, we aren't interested in the number of times purchased, but rather IF an item was purchased.
+product.spread = spread(product.tbl, key = product, value = Freq, fill = NA) #spread key, value to get a matrix
+product.spread$`Almond Croissant`[1:50] #this will show us the values prior to converting
+product.spread[product.spread>1] = 1 #set anything > 1 to 1 for use in apriori, we correctly get a notification that it is not
+product.spread[product.spread!=1] = NA #set anything <> 1 to NA for use in apriori, we correctly get a notification that it is not
+#meaningful for factors and the processing ignores the loyalty_card_number which is what we want
+product.spread$`Almond Croissant`[1:50] #check the values were not lost but in-fact converted to a "1"
+
+###PRODUCT TYPE:#####
+product_type.vals = with(primary.df, table(loyalty_card_number,product_type)) #make values for each product bought
+barplot(product_type.vals, beside=TRUE, legend=FALSE) #display plot of the values
+product_type.tbl = data.frame(product_type.vals) #set as table: This table is what needs to be used for "SPREAD" later on
+product_type.spread = spread(product_type.tbl, key = product_type, value = Freq, fill = NA) #spread key, value to get a matrix
+product_type.spread$`Drip coffee`[1:50] #this will show us the values prior to converting
+product_type.spread[product_type.spread>1] = 1 #set anything > 1 to 1 for use in apriori, we correctly get a notification that it is not
+product_type.spread[product_type.spread!=1] = NA #set anything <> 1 to NA for use in apriori, we correctly get a notification that it is not
+#meaningful for factors and the processing ignores the loyalty_card_number which is what we want
+product_type.spread$`Drip coffee`[1:50] #check the values were not lost but in-fact converted to a "1"
+
+
+###PRODUCT CATEGORY:#####
+product_category.vals = with(primary.df, table(loyalty_card_number,product_category)) #make values for each product bought
+barplot(product_category.vals, beside=TRUE, legend=FALSE) #display plot of the values
+product_category.tbl = data.frame(product_category.vals) #set as table: This table is what needs to be used for "SPREAD" later on
+product_category.spread = spread(product_category.tbl, key = product_category, value = Freq, fill = NA) #spread key, value to get a matrix
+product_category.spread$`Tea`[1:200] #this will show us the values prior to converting
+product_category.spread[product_category.spread>1] = 1 #set anything > 1 to 1 for use in apriori, we correctly get a notification that it is not
+product_category.spread[product_category.spread!=1] = NA #set anything <> 1 to NA for use in apriori, we correctly get a notification that it is not
+#meaningful for factors and the processing ignores the loyalty_card_number which is what we want
+product_category.spread$`Tea`[1:200] #check the values were not lost but in-fact converted to a "1"
+
+
+
+###PRODUCT GROUP:#####
+product_group.vals = with(primary.df, table(loyalty_card_number,product_group)) #make values for each product bought
+barplot(product_group.vals, beside=TRUE, legend=FALSE) #display plot of the values
+product_group.tbl = data.frame(product_group.vals) #set as table: This table is what needs to be used for "SPREAD" later on
+product_group.spread = spread(product_group.tbl, key = product_group, value = Freq, fill = NA) #spread key, value to get a matrix
+product_group.spread$`Food`[1:50] #this will show us the values prior to converting
+product_group.spread[product_group.spread>1] = 1 #set anything > 1 to 1 for use in apriori, we correctly get a notification that it is not
+product_group.spread[product_group.spread!=1] = NA #set anything <> 1 to NA for use in apriori, we correctly get a notification that it is not
+#meaningful for factors and the processing ignores the loyalty_card_number which is what we want
+product_group.spread$`Food`[1:50] #check the values were not lost but in-fact converted to a "1"
+
+
+###PRODUCT CATEGORY EXCLUDING ALL BUT BEVERAGES & FOOD:#####
+
+product_categoryBEVFOOD.vals = with(primary.dfBEVFOOD, table(loyalty_card_number,product_category)) #make values for each product bought
+barplot(product_categoryBEVFOOD.vals, beside=TRUE, legend=FALSE) #display plot of the values
+product_categoryBEVFOOD.tbl = data.frame(product_categoryBEVFOOD.vals) #set as table: This table is what needs to be used for "SPREAD" later on
+product_categoryBEVFOOD.spread = spread(product_categoryBEVFOOD.tbl, key = product_category, value = Freq, fill = NA) #spread key, value to get a matrix
+product_categoryBEVFOOD.spread$`Tea`[1:200] #this will show us the values prior to converting
+product_categoryBEVFOOD.spread[product_categoryBEVFOOD.spread>1] = 1 #set anything > 1 to 1 for use in apriori, we correctly get a notification that it is not
+product_categoryBEVFOOD.spread[product_categoryBEVFOOD.spread!=1] = NA #set anything <> 1 to NA for use in apriori, we correctly get a notification that it is not
+#meaningful for factors and the processing ignores the loyalty_card_number which is what we want
+product_categoryBEVFOOD.spread$`Tea`[1:200] #check the values were not lost but in-fact converted to a "1"
+
+```
+
+```{r Creation of Question 1-Specific Datasets}
+#If we were using ranges we would execute some discretizing here. However, because we are using factors
+#(did or did not purchase) we do not need to discretize. We need to convert to factors, each of the 88 product columns.
+
+#Typically, we could hard-code each factorization, like so:
+#myspread$`Almond Croissant` = as.factor(myspread$`Almond Croissant`)
+#However, to save coding, we will execute a for-loop.
+######Product:
+for (products in 2:dim(product.spread)[2]){ #for each column in columns 2 to 89 (the products, ignoring the loyalty card)
+  product.spread[,products] = as.factor(product.spread[,products]) #convert the column into a factor with NA/1, 1 being purchased
+}
+loyalty.product = data.frame(product.spread[2:dim(product.spread)[2]]) #prepare eliminating loyalty card column for apriori
+
+######Product Type:
+for (producttype in 2:dim(product_type.spread)[2]){ #for each column in columns 2 to columns (the product types, ignoring the loyalty card)
+  product_type.spread[,producttype] = as.factor(product_type.spread[,producttype]) #convert the column into a factor with NA/1, 1 being purchased
+}
+loyalty.product_type = data.frame(product_type.spread[2:dim(product_type.spread)[2]]) #prepare eliminating loyalty card column for apriori
+
+######Product Category:
+for (productcat in 2:dim(product_category.spread)[2]){ #for each column in columns 2 to 89 (the products, ignoring the loyalty card)
+  product_category.spread[,productcat] = as.factor(product_category.spread[,productcat]) #convert the column into a factor with NA/1, 1 being purchased
+}
+loyalty.product_category = data.frame(product_category.spread[2:dim(product_category.spread)[2]]) #prepare eliminating loyalty card column for apriori
+
+######Product Group:
+for (productgroup in 2:dim(product_group.spread)[2]){ #for each column in columns 2 to 89 (the products, ignoring the loyalty card)
+  product_group.spread[,productgroup] = as.factor(product_group.spread[,productgroup]) #convert the column into a factor with NA/1, 1 being purchased
+}
+loyalty.product_group = data.frame(product_group.spread[2:dim(product_group.spread)[2]]) #prepare eliminating loyalty card column for apriori
+
+
+######Product Category BEVERAGE FOOD:
+for (productcatBEVFOOD in 2:dim(product_categoryBEVFOOD.spread)[2]){ #for each column in columns 2 to 89 (the products, ignoring the loyalty card)
+  product_categoryBEVFOOD.spread[,productcatBEVFOOD] = as.factor(product_categoryBEVFOOD.spread[,productcatBEVFOOD]) #convert the column into a factor with NA/1, 1 being purchased
+}
+loyalty.product_categoryBEVFOOD = data.frame(product_categoryBEVFOOD.spread[2:dim(product_categoryBEVFOOD.spread)[2]]) #prepare eliminating loyalty card column for apriori
+```
+
+
+```{r Question 1 Method 1 - Association Rules}
+loyalty.product.transactions = as(loyalty.product, "transactions")
+loyalty.product_type.transactions = as(loyalty.product_type, "transactions")
+loyalty.product_category.transactions = as(loyalty.product_category, "transactions")
+loyalty.product_group.transactions = as(loyalty.product_group, "transactions")
+loyalty.product_categoryBEVFOOD.transactions = as(loyalty.product_categoryBEVFOOD, "transactions")
+
+itemFrequencyPlot(loyalty.product.transactions, support = .2) #take a look at items that have support of 20% of the loyalty cardholders
+itemFrequencyPlot(loyalty.product_type.transactions, support = .2) #take a look at items that have support of 20% of the loyalty cardholders
+itemFrequencyPlot(loyalty.product_category.transactions, support = .2) #take a look at items that have support of 20% of the loyalty cardholders
+itemFrequencyPlot(loyalty.product_group.transactions, support = .2) #take a look at items that have support of 20% of the loyalty cardholders
+itemFrequencyPlot(loyalty.product_categoryBEVFOOD.transactions, support = .2) #take a look at items that have support of 20% of the loyalty cardholders
+
+#######Initial Examination of Product:
+rules.product1 = apriori(loyalty.product.transactions, parameter = list(support = .01, confidence = 0.5)) #1% would be at least 22 people, with 50% or more probability they will buy rhs based on lhs
+summary(rules.product1) # we find only 7 rules in the data meeting the above conditions
+inspect(head(rules.product1, n = 10, by = "lift"))
+#Sample of the output for reference:
+#{Ginger.Scone=1,Sugar.Free.Vanilla.syrup=1}              => {Ouro.Brasileiro.shot=1}  0.01024043 0.5000000  3.576433
+#{Chocolate.syrup=1,Peppermint.Lg=1}                      => {Cappuccino=1}            0.01024043 0.6388889  3.392304
+
+#We consider adjusting the confidence to get a greater number of rules with a lower probability
+rules.product2 = apriori(loyalty.product.transactions, parameter = list(support = .01, confidence = 0.2)) #1% would be at least 22 people, with 20% or more probability they will buy rhs based on lhs
+summary(rules.product2) # we find only 7 rules in the data meeting the above conditions
+inspect(head(rules.product2, n = 10, by = "support"))
+#Sample of the output for reference:
+#{Ouro.Brasileiro.shot=1}    => {Ginger.Scone=1}                 0.05120214 0.3662420  2.330254 115  
+#{Ginger.Scone=1}            => {Ouro.Brasileiro.shot=1}         0.05120214 0.3257790  2.330254 115  
+
+
+#######Initial Examination of Product_Type:
+rules.product_type = apriori(loyalty.product_type.transactions, parameter = list(support = .05, confidence = 0.5)) #1% would be at least 22 people, with 50% or more probability they will buy rhs based on lhs
+summary(rules.product_type) # we find only rules in the data meeting the above conditions
+inspect(head(rules.product_type, n = 10, by = "lift"))
+
+#######Initial Examination of Product_Category:
+rules.product_category = apriori(loyalty.product_category.transactions, parameter = list(support = .01, confidence = 0.5)) #1% would be at least 22 people, with 50% or more probability they will buy rhs based on lhs
+summary(rules.product_category) # we find only rules in the data meeting the above conditions
+inspect(head(rules.product_category, n = 30, by = "lift"))
+
+#######Initial Examination of Product_Group:
+rules.product_group = apriori(loyalty.product_group.transactions, parameter = list(support = .01, confidence = 0.5)) #1% would be at least 22 people, with 50% or more probability they will buy rhs based on lhs
+summary(rules.product_group) # we find only rules in the data meeting the above conditions
+inspect(head(rules.product_group, n = 10, by = "lift"))
+
+#######Initial Examination of Product_CategoryBEVFOOD:
+rules.product_categoryBEVFOOD = apriori(loyalty.product_categoryBEVFOOD.transactions, parameter = list(support = .01, confidence = 0.5)) #1% would be at least 22 people, with 50% or more probability they will buy rhs based on lhs
+summary(rules.product_categoryBEVFOOD) # we find only 32 rules in the data meeting the above conditions
+inspect(head(rules.product_categoryBEVFOOD, n = 10, by = "lift"))
+
+############################################################################
+############Redundant rules and RHS/LHS inspection##########################
+############################################################################
+
+##Below, we switch out the rules for different sets to run and analyze various aspects
+##of the association rules. This is where we gain insight into the lift/support/and confidence
+##that can be considered for analysis.
+#Consequents:
+myrhs = rhs(rules.product_category) #my right-hand side of rules specified above
+singleCon = which(size(myrhs) == 1) #which consequent = 1 item
+singleConRules = rules.product_category[singleCon] #need to store the singleCon rules mined
+nonRedundantConProductCategory = which(interestMeasure(singleConRules, measure = "improvement", quality_measure = "confidence") >= 0) #Remove redundant CON product types
+rulesConNonRedun = rules.product_category[nonRedundantConProductCategory]
+summary(rulesConNonRedun)
+inspect(head(rulesConNonRedun, n = 10, by = "lift"))
+
+
+#Antecedents:
+mylhs = lhs(rules.product_category) #my left-hand side of rules specified above
+singleAnt = which(size(mylhs) == 1) #which antecedent = 1 item
+singleAntRules = rules.product_type[singleAnt] #need to store the singleCon rules mined
+nonRedundantAntProductType = which(interestMeasure(singleAntRules, measure = "improvement", quality_measure = "confidence") >= 0) #Remove redundant CON product types
+rulesAntNonRedun = rules.product_type[nonRedundantAntProductType]
+summary(rulesAntNonRedun)
+inspect(head(rulesAntNonRedun, n = 20, by = "lift"))
+
+
+#Consequents BEV FOOD:
+myrhs = rhs(rules.product_categoryBEVFOOD) #my right-hand side of rules specified above
+singleCon = which(size(myrhs) == 1) #which consequent = 1 item
+singleConRules = rules.product_categoryBEVFOOD[singleCon] #need to store the singleCon rules mined
+nonRedundantConProductCatTypeBEVFOOD = which(interestMeasure(singleConRules, measure = "improvement", quality_measure = "confidence") >= 0) #Remove redundant CON product types
+rulesConBevFoodNonRedun = rules.product_categoryBEVFOOD[nonRedundantConProductCatTypeBEVFOOD]
+summary(rulesConBevFoodNonRedun)
+inspect(head(rulesConBevFoodNonRedun, n = 10, by = "lift"))
+
+#Antecedents BEV FOOD:
+mylhs = lhs(rules.product_categoryBEVFOOD) #my left-hand side of rules specified above
+singleAnt = which(size(mylhs) == 1) #which antecedent = 1 item
+singleAntRules = rules.product_categoryBEVFOOD[singleAnt] #need to store the singleCon rules mined
+nonRedundantAntProductCatTypeBEVFOOD = which(interestMeasure(singleAntRules, measure = "improvement", quality_measure = "confidence") >= 0) #Remove redundant CON product types
+rulesAntBevFoodNonRedun = rules.product_categoryBEVFOOD[nonRedundantAntProductCatTypeBEVFOOD]
+summary(rulesAntBevFoodNonRedun)
+inspect(head(rulesAntBevFoodNonRedun, n = 20, by = "lift"))
+
+
+rulesBakeryBevFood = subset(rulesConBevFoodNonRedun, subset = rhs %in% c("Bakery=1")) #Let's suppose Bakery is the target for upselling, here we can find where the right-hand-side (Con) contained only Bakery
+
+#Below, we see that Bakery is associated with Drinking Chocolate, moreso than than Coffee or Tea. For loyalty card customers (in this sample, for this month only) when we look at Food and Beverage purchases for the month, we find that those who purchase Drinking Chocolate have an 82% probability of purchasing Bakery. However, we do not find that they are any more likely (less than 1.05 times more) to purchase Bakery compared to a Food/Beverage loyalty customer randomly chosen in the dataset.
+inspect(head(rulesBakeryBevFood, n = 10, by = "lift"))
+
+#Below, we also see that when looking at all items regarding Bakery, it rises to the top of the list for lift. This means that when, for instance, Coffee, Packaged Chocolate, and Tea are purchased, a person is 1.17 times more likely than a randomly selected person in the dataset to also purchase Bakery.
+rulesBakery = subset(rulesConNonRedun, subset = rhs %in% c("Bakery=1")) #assuming Bakery is target here for all items, not just Food/Beverage
+inspect(head(rulesBakery, n = 5, by = "lift"))
+
+#By referring back to the orginal set of Beverage/Food rules, we do see that Bakery is the single item that has the highest lift with combinations of antecedent itemsets. That is, the interpretation could mean that any "upselling" should probably be done with bakery items compared with beverage items if the goal is to increase sales. This also fits well with what we see
+inspect(head(rules.product_categoryBEVFOOD, n = 10, by = "lift"))
+inspect(head(rules.product_category, n = 10, by = "lift"))
+
+
+```
+
+```{r Question 2 - Method 1 - Clustering}
+# measurements only (as if we do not have diagnosis)
+x = primary.df[c(2, 3, 5, 7, 8, 9, 10, 11, 12, 13, 14, 19, 20, 21, 22, 24, 26, 30, 31)] #usable vars
+###Below is the cleaning plan which is visited below:
+# 2, 3 => transactiondate/time to merge and do setting 
+# 5 => staff_id => make this 0/1 staff or manager using column 30 "position"
+# 7 => instore_yn => primary.df[which(instore_yn==" "),] #missing values to deal with
+# 8 => order
+# 9 => line_item_id
+# 10 => product_id
+# 11 => quantity
+# 12 => line_item_amount
+# 13 => unit_price
+# 14 => promo_item_yn - convert to numeric
+# 19 => unit of measure (convert all)
+# 20 => current_wholesale_price
+# 21 => current_retail_price ... test = as.numeric(current_retail_price)
+# 22 => tax_exempt_yn -convert to 1/0
+# 24 => customer_since (convert date to numeric) 
+# 26 => birth_date (convert date to numeric) 
+# 31 => start date of employee (convert date to numeric) 
+attach(x)
+#Create Transaction Seconds:
+x$transactionDTS = paste(transaction_date, transaction_time)
+x$transactionSec = as.numeric(as.POSIXct(x$transactionDTS)-as.POSIXct("2019-04-01 00:00:00"), units="secs") #we will measure from the first day of the month
+
+#CustomerSince:
+x$customer_sinceDay = as.numeric(as.POSIXct(x$customer_since)-as.POSIXct("2015-04-01"), units="days") #days from arbitrary date (leap years accounted for)
+
+#BirthDate:
+x$birthdateDay = as.numeric(as.POSIXct(x$birthdate)-as.POSIXct("1949-12-31"), units="days") #days from arbitrary date (leap years accounted for)
+
+#StartDate:
+x$start_dateDay = as.numeric(as.POSIXct(x$start_date, format = "%m/%d/%Y")-as.POSIXct("1999-12-31"), units="days") #days from arbitrary date (leap years accounted for)
+
+#Staff Position/Manager:
+x$manager = 0; x$manager[which(x$position=="Store Manager")] = 1
+
+#In Store
+x$instoreCoded = NA; #294 blank values
+x$instoreCoded[which(x$instore_yn=="N")] = 0; x$instoreCoded[which(x$instore_yn=="Y")] = 1
+
+#Promo Item
+x$promo_item_ynCoded[which(x$promo_item_yn=="N")] = 0; x$promo_item_ynCoded[which(x$promo_item_yn=="Y")] = 1
+
+#Unit of Measure
+ConvertedUOMs = c(0.5, 0.9, 16, 1, 1.5, 12, 16, 24, 3, 6, 8, 0.35, NA) #pump is a single pump, googling shows 0.35 oz which is what we will assume; single is for physical 'eaches' and will be made NA for distance purposes
+unit_of_measure = c(".5 lb", ".9 oz", "1 lb", "1 oz", "1.5 oz", "12 oz", "16 oz", "24 oz", "3.0 oz", "6 oz", "8 oz", "pump", "single") 
+valmapping = data.frame(ConvertedUOMs, unit_of_measure)
+x = left_join(x, valmapping, by="unit_of_measure") #join valmapping to x based on unit_of_measure
+
+#Current Retail Price
+x$current_retail_price = as.numeric(current_retail_price)
+
+#Tax Exempt YN
+x$taxexemptCoded[which(x$tax_exempt_yn=="N")] = 0; x$taxexemptCoded[which(x$tax_exempt_yn=="Y")] = 1
+
+
+####################################################################################################
+#########Below we perform a Principal Components Analysis to find the principle components that#####
+#########explain variability in the data and find how much influence variables have within PCs######
+####################################################################################################
+
+#Excluding "order", "line_item_id", "product_id", "manager" because these are identifiers and not continuous.
+#Excluding "promo_item_ynCoded", "instoreCoded", "taxexemptCoded", because it results in constant 0 causing issue for scaling and these are also identifiers and not continous
+use = c("transactionSec", "customer_sinceDay", "birthdateDay", "start_dateDay",   "ConvertedUOMs",  "quantity", "line_item_amount", "unit_price", "current_wholesale_price", "current_retail_price") #create inclusion variables
+x.subset = x[,(names(x) %in% use)] #create subset df for analysis
+#summary(x.subset) #All variables are checked and are now continous
+x.subset$quantity <- as.numeric(x.subset$quantity) #will get zero variance error if not converted
+x.subset.nona = na.omit(x.subset) #subset to eliminate NA rows (this gets us to those with Loyalty Cards Only as well)
+which(apply(x.subset.nona, 2, var)==0) #identify 0 variance column because it causes PRCOMP error
+pc.info = prcomp(x.subset.nona, center=T, scale=T) #center & scale
+pc.info$rotation  #loadings
+#above in PC1 we see that unit_price and current_wholesale_price have a large influence
+
+par(mfrow=c(1,1))
+plot(pc.info)
+summary(pc.info) #within 6 PCs we get 86% of the Prop. of Var. Explained
+pc.info$sdev #peel of SD
+vjs = pc.info$sdev^2 #Square those
+pve = vjs/sum(vjs) #proportion of variability explained as variance divided by sum of variances
+cumsum(pve) #cumulative sum of the pve (reflects just the bottom row), shows how much we explained after so many
+
+plot(cumsum(pve), type = "o", ylab="Cumulative PVE", xlab="Principal Component") #scree plot, connectivity between points to observe breaks/elbows, we see at about 7 is an elbow
+
+biplot(pc.info, xlim=c(-.01, .05), ylim=c(-.01,.025)) #not very helpful in this at all, too crowded
+pc.info$rotation[,7]  # loadings for seventh principal component, 
+
+
+####################################################################################################
+#########Now we begin our Clustering Methods######
+####################################################################################################
+
+# measurements only
+x = x.subset.nona #further examanination of our loyalty customer purchases
+dim(x) #9 variables for 20,990 rows
+attach(x)
+
+#in parallelized plots we see serious differences in magnitudes of the measurements
+#we would want to scale the data
+par(mfrow=c(1,3))
+plot(birthdateDay, unit_price, main="")
+plot(birthdateDay, customer_sinceDay, main="")
+plot(quantity, unit_price, main="")
+
+x.scale = scale(x) #scaling visibly required to allow all predictors to contribute to similarity measure
+attach(data.frame(x.scale))
+
+
+############ fitting hierarchical models - complete  with p = 9 variables ############
+dist.x = dist(x.scale, method="euclidean")
+hc.complete = hclust(dist.x,method="complete") #complete linkage -> furthest distance between clusters of dissimilarity
+par(mfrow=c(1,1))
+plot(hc.complete,cex=0.5,labels=F)
+abline(h=c(15, 22, 40),col=c("green","purple","red","blue"),lty=2)  # selecting 2, 3, 4 clusters respectively
+
+
+
+############ fitting hierarchical models - single  with p = 9 variables ############
+dist.x = dist(x.scale, method="euclidean")
+hc.single = hclust(dist.x,method="single")
+par(mfrow=c(1,1))
+plot(hc.single,cex=0.5,labels=F)
+
+
+############ fitting hierarchical models - average with p = 9 variables ############
+dist.x = dist(x.scale, method="manhattan")
+hc.average = hclust(dist.x,method="average")
+par(mfrow=c(1,1))
+plot(hc.average,cex=0.5,labels=F)
+
+####While I don't see evidence of a good set of clusters, I wonder if we focus on some of the principal component variables if we might have a more clear result.
+# measurements only (as if we do not have diagnosis)
+x.PCA = x.subset.nona[,c(5, 9, 4, 3)] #any var with a PC influence of more than .1 (either direction)
+dim(x.PCA) #4 variables for 20,990 rows
+attach(x.PCA)
+
+x.scalePCA = scale(x.PCA) #scaling visibly required to allow all predictors to contribute to similarity measure
+attach(data.frame(x.scalePCA))
+
+############ fitting hierarchical models - complete  with p = 4 variables ############
+dist.x = dist(x.scalePCA, method="euclidean")
+hc.complete4 = hclust(dist.x,method="complete") #complete linkage -> furthest distance between clusters of dissimilarity
+par(mfrow=c(1,1))
+plot(hc.complete4,cex=0.5,labels=F)
+
+
+
+############ fitting hierarchical models - single  with p = 4 variables ############
+dist.x = dist(x.scalePCA, method="euclidean")
+hc.single4 = hclust(dist.x,method="single")
+par(mfrow=c(1,1))
+plot(hc.single4,cex=0.5,labels=F)
+
+
+
+############ fitting hierarchical models - average with p = 4 variables ############
+dist.x = dist(x.scalePCA, method="manhattan")
+hc.average4 = hclust(dist.x,method="average")
+par(mfrow=c(1,1))
+plot(hc.average4,cex=0.5,labels=F)
+
+
+#Go back to original 9 vars:
+x.scale = scale(x) #scaling visibly required to allow all predictors to contribute to similarity measure
+attach(data.frame(x.scale))
+#Plot Clusters based on Number of Clusters
+colused = c("turquoise3", "red", "black", "orange","blue", "slateblue",  "purple","green", "violetred" )
+par(mfrow=c(1,3))
+
+#We will loop through various cuts
+for (each in 1:10){ #Begin loop to check different views of the clusters/cuts
+  nclust=each #change the number of clusters
+  memb = cutree(hc.complete,k=nclust) #pull the clusters off the cutree
+  par(mfrow=c(1,3))
+  plot(birthdateDay, unit_price ,pch=16,main=paste(nclust," clusters joined by complete linkage"))
+  for (i in 1:9)  points(birthdateDay[memb == i],unit_price[memb == i],pch=16,col=colused[i])
+  plot(unit_price, quantity ,pch=16,main=paste(nclust," clusters joined by complete linkage"))
+  for (i in 1:9)  points(unit_price[memb == i],quantity[memb == i],pch=16,col=colused[i])
+  plot(start_dateDay, customer_sinceDay ,pch=16,main=paste(nclust," clusters joined by complete linkage"))
+  for (i in 1:9)  points(start_dateDay[memb == i],customer_sinceDay[memb == i],pch=16,col=colused[i])
+}
+
+finalhierarchicalclusters = memb
+attach(x)
+#We see how 9 clusters on the full hierarchical model align quite strongly to unit price, just as a simple slice that does not imply the method is correlating clusters with price, it just 'happens' to be the case
+table(finalhierarchicalclusters,unit_price)
+
+
+
+############ fitting non-hierarchical models - K-means with p = 9 variables ############
+#####End result should be 45 plots
+for (cluster in 2:9){ #Begin outer loop for each cluster level
+  nclust=cluster
+  colused = c("turquoise3", "red", "black", "orange","blue", "slateblue",  "purple","green", "violetred" )
+  set.seed(15, sample.kind="Rounding") #seed of 12 because when we run k-means the resulting clusters will depend on initiatlization
+  
+    ###Run this over and over looking for movement of clusters
+    #repeat the following a few times
+    for (run in 1:5){ #Begin loop of run to get visuals
+      memb = kmeans(x.scale,nclust)$cluster
+      #plotting clusters
+      colused = c("turquoise3", "red", "black", "orange","blue", "slateblue",  "purple","green", "violetred" )
+        par(mfrow=c(1,3))
+        plot(birthdateDay, unit_price ,pch=16,main=paste(nclust," clusters complete linkage-run:", run))
+        for (i in 1:9)  points(birthdateDay[memb == i],unit_price[memb == i],pch=16,col=colused[i])
+        plot(unit_price, quantity ,pch=16,main=paste(nclust," clusters complete linkage-run:", run))
+        for (i in 1:9)  points(unit_price[memb == i],quantity[memb == i],pch=16,col=colused[i])
+        plot(start_dateDay, customer_sinceDay ,pch=16,main=paste(nclust," clusters complete linkage-run:", run))
+        for (i in 1:9)  points(start_dateDay[memb == i],customer_sinceDay[memb == i],pch=16,col=colused[i])
+    } #End inner loop
+} #End outer loop
+
+#Above, by examining the plots, we see each set of clusters have very different points throughout. By observation we notice that more than 5% of the points switch clusters within the multiple iterations. This means that we do not have consistent clustering using kmeans for the 9 variables.
+
+```
+
+```{r Any Figures, Images, and References Used in Executive Summary}
+#Some of the below codesets are used in references in the Executive Summary. Rather than 'hunting' for the right code, running these should yield results discussed in the Exec. Summary:
+
+#Correlations
+sum(!is.na(primary.df$loyalty_card_number)) #Number of loyalty card transactions
+round(cor(x.scale), 4) #Correlations between variables
+chart.Correlation(x.scale, histogram=FALSE, pch=10) #Correlations between variables
+chart.Correlation(x.scale[,1:5], histogram=TRUE, pch=20) #Correlations between variables
+chart.Correlation(x.scale[,6:10], histogram=TRUE, pch=20) #Correlations between variables
+chart.Correlation(x.scale[,c(1, 2, 9, 10)], histogram=TRUE, pch=20) #Correlations between variables
+
+#Association Rules Analysis
+summary(rules.product_categoryBEVFOOD) # we find only 32 rules in the data meeting the above conditions
+inspect(head(rulesBakery, n = 5, by = "lift")) #we find 1.2 lift and 95% confidence
+
+#Principal Components Analysis:
+pc.info$rotation  #loadings in PC1 we see that unit_price and current_wholesale_price have a large influence
+summary(pc.info) #within 6 PCs we get 86% of the Prop. of Var. Explained
+
+#Figure 1
+dist.x = dist(x.scale, method="euclidean")
+hc.complete = hclust(dist.x,method="complete") #complete linkage -> furthest distance between clusters of dissimilarity
+par(mfrow=c(1,1))
+plot(hc.complete,cex=0.5,labels=F)
+abline(h=c(15, 22, 40),col=c("green","purple","red","blue"),lty=2)  # selecting 2, 3, and 4 clusters respectively
+
+#Figure 2
+#This will produce 3 charts next to each other:
+  nclust=5 #set to 5 clusters for this example
+  colused = c("turquoise3", "red", "black", "orange","blue", "slateblue",  "purple","green", "violetred" )
+  set.seed(15, sample.kind="Rounding") #seed of 15 because when we run k-means the resulting clusters will depend on init
+   par(mfrow=c(1,3))
+#Chart for Executive Summary
+    #repeat the following a few times
+    for (run in 1:3){ #Begin loop of run to get visuals
+      memb = kmeans(x.scale,nclust)$cluster
+      #plotting clusters
+      colused = c("turquoise3", "red", "black", "orange","blue", "slateblue",  "purple","green", "violetred" )
+        plot(transactionSec, unit_price ,pch=16,main=paste(nclust," clusters k-means run:", run))
+        for (i in 1:9)  points(transactionSec[memb == i],unit_price[memb == i],pch=16,col=colused[i])
+    } #End loop
+
+#Figure 3:
+  itemFrequencyPlot(loyalty.product_category.transactions, support = .01) #take a look at items that have support of 1% of the loyalty cardholders
+  
+```
+
+#End of Project Script
